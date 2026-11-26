@@ -82,6 +82,19 @@ def check_specificity(text):
     return score, f"{hits} concrete markers, {density:.1f} per 100 words (want 4+)"
 
 
+def lex_pattern(find):
+    """\\b only next to a word character, so entries ending in '?' match."""
+    body = re.escape(find).replace(r"\ ", r"\s+")
+    pre = r"\b" if find[0].isalnum() else ""
+    post = r"\b" if find[-1].isalnum() or find[-1] == "_" else ""
+    return re.compile(pre + body + post, re.IGNORECASE)
+
+
+_EMO = "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF][\uFE0F\U0001F3FB-\U0001F3FF]*"
+EMOJI_SEQ_RE = re.compile(rf"{_EMO}(?:\u200d{_EMO})+|\U0001F3F4[\U000E0020-\U000E007E]+\U000E007F")
+ZWNJ_OK_RE = re.compile(r"(?<=[^\W\d_A-Za-z])\u200c(?=[^\W\d_A-Za-z])")
+
+
 def check_slop(text, lex):
     """Stock vocabulary density against the lexicon."""
     w = words(text)
@@ -89,8 +102,7 @@ def check_slop(text, lex):
         return 50.0, "empty"
     hits, found = 0, []
     for entry in lex["words"] + lex["phrases"]:
-        pattern = re.compile(r"\b" + re.escape(entry["find"]).replace(r"\ ", r"\s+") + r"\b",
-                             re.IGNORECASE)
+        pattern = lex_pattern(entry["find"])
         n = len(pattern.findall(text))
         if n:
             hits += n
@@ -105,7 +117,9 @@ def check_slop(text, lex):
 
 def check_fingerprint(text):
     """Characters a phone keyboard does not produce."""
-    invisible = sum(1 for c in text if unicodedata.category(c) == "Cf")
+    # Emoji ZWJ/flag sequences and ZWNJ inside words are legitimate.
+    bare = ZWNJ_OK_RE.sub("", EMOJI_SEQ_RE.sub("", text))
+    invisible = sum(1 for c in bare if unicodedata.category(c) == "Cf")
     em = text.count("—")
     curly = sum(text.count(c) for c in "‘’“”")
     ellip = text.count("…")
@@ -155,12 +169,15 @@ CHECKS = ["BURSTINESS", "SPECIFICITY", "SLOP DENSITY", "FINGERPRINT", "VOICE"]
 
 
 def run(text, lex):
+    # Smart-punctuation apostrophes count as apostrophes for the word checks;
+    # the fingerprint check still sees the original characters.
+    plain = text.replace("\u2019", "'").replace("\u2018", "'")
     results = {}
-    results["BURSTINESS"] = check_burstiness(text)
-    results["SPECIFICITY"] = check_specificity(text)
-    results["SLOP DENSITY"] = check_slop(text, lex)
+    results["BURSTINESS"] = check_burstiness(plain)
+    results["SPECIFICITY"] = check_specificity(plain)
+    results["SLOP DENSITY"] = check_slop(plain, lex)
     results["FINGERPRINT"] = check_fingerprint(text)
-    results["VOICE"] = check_voice(text, lex)
+    results["VOICE"] = check_voice(plain, lex)
     scores = [results[c][0] for c in CHECKS]
     # The weakest check drags the verdict: a detector only needs one signal.
     overall = statistics.mean(scores) * 0.6 + min(scores) * 0.4
@@ -197,6 +214,8 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--lexicon", default=LEX)
     args = ap.parse_args()
+    if args.input == "-" and args.compare == "-":
+        ap.error("only one of the two inputs can be - (stdin)")
 
     lex = json.load(open(args.lexicon, encoding="utf-8"))
     read = lambda p: sys.stdin.read() if p == "-" else open(p, encoding="utf-8").read()
@@ -217,7 +236,7 @@ def main():
 
     if args.json:
         print(json.dumps(payload if args.compare else payload[0], indent=2))
-        return
+        sys.exit(0 if payload[-1]["verdict"] == "PASS" else 1)
 
     for (name, text), p in zip(targets, payload):
         results, overall, verdict = run(text, lex)

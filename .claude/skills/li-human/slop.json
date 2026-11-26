@@ -550,6 +550,21 @@
       "find": "it is worth noting that",
       "replace": "note that",
       "family": "connectives"
+    },
+    {
+      "find": "most notably",
+      "replace": "",
+      "family": "connectives"
+    },
+    {
+      "find": "more importantly",
+      "replace": "",
+      "family": "connectives"
+    },
+    {
+      "find": "most importantly",
+      "replace": "",
+      "family": "connectives"
     }
   ],
   "phrases": [
