@@ -30,9 +30,10 @@ Look for the PostZen MCP tools in this session: `listAccounts`, `createPost`,
 `createMediaPresign`. If they are there, PostZen is connected. If they are
 not, the user has three ways in:
 
-1. **Plugin install.** The plugin ships `.mcp.json`, which registers the
-   `postzen` server at `https://mcp.postzen.dev/mcp`. Run `/mcp`, pick
-   `postzen`, then Authenticate.
+1. **Plugin install.** The plugin version ships `.mcp.json`, which registers
+   the `postzen` server at `https://mcp.postzen.dev/mcp`. Run `/mcp`, pick
+   `postzen`, then Authenticate. This repo's copy of the skills does not
+   include `.mcp.json`, so here use option 2.
 2. **Manual skills copy.** Add the server first:
    `claude mcp add --transport http postzen https://mcp.postzen.dev/mcp`,
    then `/mcp`, `postzen`, Authenticate.

@@ -36,7 +36,16 @@ import unicodedata
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEX = os.path.join(HERE, "slop.json")
 
-URL_RE = re.compile(r"https?://\S+|www\.\S+|\S+@\S+\.\S+")
+_NOT_URL = "\\s\u2014\u2013\u200b-\u200f\u2060\ufeff\u00ad"
+URL_RE = re.compile(rf"https?://[^{_NOT_URL}]+|www\\.[^{_NOT_URL}]+|[^{_NOT_URL}@]+@[^{_NOT_URL}@]+\\.[^{_NOT_URL}]+")
+URL_TRAIL = ".,;:!?)]}'\"\u2019\u201d"
+# Emoji ZWJ sequences and tag-flag sequences use invisible characters
+# legitimately; they are shielded from the invisible pass.
+_EMO = "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF][\uFE0F\U0001F3FB-\U0001F3FF]*"
+EMOJI_SEQ_RE = re.compile(rf"{_EMO}(?:\u200d{_EMO})+|\U0001F3F4[\U000E0020-\U000E007E]+\U000E007F")
+# ZWNJ between two non-ASCII letters is real orthography (Persian, Indic scripts).
+ZWNJ_OK_RE = re.compile(r"(?<=[^\W\d_A-Za-z])\u200c(?=[^\W\d_A-Za-z])")
+DASH_MARK = "\x01"   # marks commas that came from an em dash
 SENT_RE = re.compile(r"[^.!?\n]+[.!?]*")
 
 
@@ -58,8 +67,13 @@ def protect_urls(text):
     found = []
 
     def stash(m):
-        found.append(m.group(0))
-        return f"\x00URL{len(found) - 1}\x00"
+        url = m.group(0)
+        tail = ""
+        while url and url[-1] in URL_TRAIL:
+            tail = url[-1] + tail
+            url = url[:-1]
+        found.append(url)
+        return f"\x00URL{len(found) - 1}\x00" + tail
 
     return URL_RE.sub(stash, text), found
 
@@ -73,6 +87,14 @@ def restore_urls(text, found):
 def pass_invisible(text, lex):
     """Delete or space-normalise invisible characters. Returns (text, hits)."""
     hits = []
+    kept = []
+
+    def keep(m):
+        kept.append(m.group(0))
+        return f"\x00KEEP{len(kept) - 1}\x00"
+
+    text = EMOJI_SEQ_RE.sub(keep, text)
+    text = ZWNJ_OK_RE.sub(keep, text)
     for entry in lex["invisible"]:
         cp = _cp(entry["cp"])
         if isinstance(cp, tuple):
@@ -90,6 +112,8 @@ def pass_invisible(text, lex):
         hits.append({"name": "other invisible format chars", "count": len(stray),
                      "action": "delete"})
         text = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    for i, seq in enumerate(kept):
+        text = text.replace(f"\x00KEEP{i}\x00", seq)
     return text, hits
 
 
@@ -103,7 +127,7 @@ def pass_typographic(text, lex):
         hits.append({"name": f"{ch} {entry['name']}", "count": n, "to": entry["to"].strip() or "(space)"})
         if ch == "—":
             # " word — word " and "word—word" both collapse to a comma + space.
-            text = re.sub(r"\s*—\s*", ", ", text)
+            text = re.sub(r"[ \t]*—[ \t]*", DASH_MARK + ", ", text)
         elif ch == "–":
             text = re.sub(r"\s*–\s*(?=\d)", "-", text)      # 5–10  -> 5-10
             text = re.sub(r"\s+–\s+", ", ", text)            # used as em dash
@@ -126,6 +150,24 @@ def _match_case(src, repl):
     return repl
 
 
+def lex_pattern(find, delete=False):
+    """Word-bounded pattern for a lexicon entry. \\b is only added next to a
+    word character, so entries ending in '?' still match. Deletions also take
+    the comma and spacing that went with them."""
+    body = re.escape(find).replace(r"\ ", r"\s+")
+    pre = r"\b" if find[0].isalnum() else ""
+    post = r"\b" if find[-1].isalnum() or find[-1] == "_" else ""
+    if not delete:
+        return re.compile(pre + body + post, re.IGNORECASE)
+    # ", notably, fast" -> " fast": take the leading comma only when a
+    # trailing one closes the aside.
+    lead = rf"(?:,[ \t]*(?={pre}{body}{post}[ \t]*,))?"
+    return re.compile(lead + pre + body + post + r"(?:[ \t]*,)?[ \t]*", re.IGNORECASE)
+
+
+DEL_MARK = "\x02"     # marks where a lexicon entry was deleted
+
+
 def pass_lexical(text, lex):
     """Replace slop words and phrases. Longest first so phrases win."""
     hits = []
@@ -133,23 +175,28 @@ def pass_lexical(text, lex):
                      key=lambda e: len(e["find"]), reverse=True)
     for entry in entries:
         find = entry["find"]
-        pattern = re.compile(r"\b" + re.escape(find).replace(r"\ ", r"\s+") + r"\b",
-                             re.IGNORECASE)
+        pattern = lex_pattern(find, delete=not entry["replace"])
         found = pattern.findall(text)
         if not found:
             continue
         hits.append({"find": find, "replace": entry["replace"] or "(deleted)",
                      "count": len(found), "family": entry["family"]})
-        text = pattern.sub(lambda m: _match_case(m.group(0), entry["replace"]), text)
+        text = pattern.sub(lambda m: _match_case(m.group(0), entry["replace"]) or DEL_MARK, text)
     # Clean up after deletions.
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    text = re.sub(r"(?m)^[ \t]*([,.;:])\s*", "", text)
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", text)
+    text = re.sub(r"(?m)^([ \t]*)(?:[,;:]|\.(?!\.))(?=[ \t]|$)[ \t]*", r"\1", text)
+    text = re.sub(r"[ \t]+(?=[,;:!?]|\.(?!\.))", "", text)
+    # A deletion at the start of a sentence leaves it lower-case.
+    text = re.sub(r"(?m)((?:^|[.!?])[ \t]*)" + DEL_MARK + r"+[ \t]*([a-z])",
+                  lambda m: m.group(1) + m.group(2).upper(), text)
+    text = re.sub(r"(?m)[ \t]*" + DEL_MARK + r"+[ \t]*(?=[,;:!?]|\.(?!\.)|$)", "", text)
+    text = re.sub(r"(?m)^([ \t]*)" + DEL_MARK + r"+[ \t]*", r"\1", text)
+    text = re.sub(r"[ \t]*" + DEL_MARK + r"+[ \t]*", " ", text)
     text = re.sub(r"(?m)^[ \t]+$", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     # An em dash that became a comma, followed by a sentence connective, leaves
     # a splice ("is important, also, it's proof"). Promote it to a full stop.
-    text = re.sub(r",\s*(also|so|still|basically|in the end)\s*,\s*",
+    text = re.sub(DASH_MARK + r",[ \t]*(also|so|still|basically|in the end)[ \t]*,[ \t]*",
                   lambda m: ". " + m.group(1)[0].upper() + m.group(1)[1:] + ", ", text)
     return text, hits
 
@@ -184,8 +231,9 @@ def humanize(text, lex):
     text, inv = pass_invisible(text, lex)
     text, typo = pass_typographic(text, lex)
     text, lexi = pass_lexical(text, lex)
+    text = text.replace(DASH_MARK, "")
     text = restore_urls(text, urls)
-    return text.strip() + "\n", {
+    return text.strip("\n").rstrip() + "\n", {
         "invisible": inv,
         "typographic": typo,
         "lexical": lexi,
