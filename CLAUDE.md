@@ -80,11 +80,26 @@ of a session instead of asking again.
 
 ## User profile (filled in by the user)
 
-<!-- Fill these in once so skills don't ask every session. -->
-- What I sell, and to whom:
+<!-- Drafted from published LinkedIn posts (Nov 2026). Edit freely. -->
+- What I sell, and to whom: remote executive virtual assistant work
+  (owning the inbox, the calendar and client follow-ups) for founders of
+  coaching businesses and agencies. Based in Lagos, open to work.
 - Themes I want to be known for:
-- Audience timezone (IANA name, e.g. Africa/Lagos):
+  1. Inbox triage (the 3-pile system: needs the CEO / urgent / not urgent)
+  2. Calendar ownership and the checks behind it
+  3. Delegating outcomes, not tasks
+  4. Using AI tools as a VA, with a human check before anything goes out
+- Proof points to use (real, from past roles): 200+ emails a day with every
+  urgent one answered within 24 hours; 50+ meetings a week; reports that
+  contributed to a 15% boost in team productivity; ChatGPT cut email
+  drafting time by about 40%. All from six months supporting a CEO. Don't
+  invent new numbers.
+- Audience timezone (IANA name): Europe/London and America/New_York (I cover
+  UK and US East Coast hours). Posts so far go out 13:00-13:30 UTC.
 - Words or phrases I always use (keep them even if they're in slop.json):
+  "outcomes, not tasks", "That's the whole system/habit", "Steal it",
+  "If you run a coaching business or an agency, ...". Hashtags:
+  #VirtualAssistant plus one topic tag.
 - Words or phrases I never use:
 
 ## Git
